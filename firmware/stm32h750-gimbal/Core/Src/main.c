@@ -38,8 +38,20 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+/*
+ * 云台控制的数据流（调试时建议按此顺序观察）：
+ *
+ * MaixCAM(UART1) 给出目标/激光点像素坐标 ─┐
+ *                                          ├─> track_pid_run() ─> move_to_position()
+ * 车体 MSPM0G3507(UART4) 给出编码器状态 ──┘                         └─> 两路 STEP/DIR
+ * WIT 惯导(UART6) 给出 yaw/角速度 ─────────────> x 轴角度补偿
+ *
+ * 下面的坐标和脉冲值都是“标定后的项目内部单位”，不是毫米或角度。修改传动比、
+ * 相机安装位置或机构零点后，应先重新标定，再调整 PID。
+ */
 extern int lookup_table[];
 
+/* 编码器计数到 X 轴补偿脉冲的切比雪夫拟合。输入应落在 X_MIN~X_MAX 内。 */
 #define CHEB_ORDER 6
 #define X_MIN 0.000000f
 #define X_MAX 6490.000000f
@@ -57,6 +69,7 @@ static inline float cheb_normalize(float x) {
     return (2.0f * x - (X_MAX + X_MIN)) / (X_MAX - X_MIN);
 }
 
+/* 计算第一段切比雪夫拟合值；超出标定区间时是外推，精度无法保证。 */
 float cheb_eval(float x) {
     float xp = cheb_normalize(x);
     float T0 = 1.0f;
@@ -70,9 +83,6 @@ float cheb_eval(float x) {
     }
     return y-194.586731;
 }
-
-
-
 
 #define CHEB_ORDER2 6
 #define X_MIN2 0.000000f
@@ -91,6 +101,7 @@ static inline float cheb_normalize2(float x) {
     return (2.0f * x - (X_MAX2 + X_MIN2)) / (X_MAX2 - X_MIN2);
 }
 
+/* 第二组拟合参数，目前保留给另一段机构标定。 */
 float cheb_eval2(float x) {
     float xp = cheb_normalize2(x);
     float T0 = 1.0f;
@@ -109,19 +120,24 @@ float cheb_eval2(float x) {
 
 #include <math.h>
 
-// Scaler parameters
+/*
+ * 神经网络标定模型：将编码器输入归一化后，经 1-10-1 网络映射为补偿脉冲。
+ * 当前主流程使用 fitting_calcu_0/1/2；fitting_calcu_3() 可切换到本模型。
+ * 这些权重由离线标定得到，未经重新训练请不要随意修改。
+ */
+// 输入、输出的归一化参数
 float scaler_x_mean = 3162.5f;
 float scaler_x_scale = 1826.1588786302248f;
 float scaler_y_mean = 3037.9078406576036f;
 float scaler_y_scale = 1788.344798268679f;
 
-// Layer 0: 1 -> 10
+// 隐藏层：1 个输入节点 -> 10 个节点
 float weights_0[1][10] = {
     {0.389808, -0.220694, -0.060530, 0.362304, -0.392653, -0.386696, -0.525085, 0.287447, 0.388318, -0.323335}
 };
 float biases_0[10] = {-0.154673, -0.076658, -0.136058, -0.081717, 0.143183, 0.106359, -0.078212, 0.059661, 0.084437, 0.027147};
 
-// Layer 1: 10 -> 1
+// 输出层：10 个节点 -> 1 个输出
 float weights_1[10][1] = {
     {0.445674},
     {-0.105056},
@@ -136,7 +152,7 @@ float weights_1[10][1] = {
 };
 float biases_1[1] = {0.152199};
 
-// tanh activation - 使用查表优化
+// tanh 激活函数：使用查找表避免在实时控制中重复计算 tanhf()
 #define TANH_TABLE_SIZE 2048
 #define TANH_INPUT_RANGE 4.0f
 static float tanh_table[TANH_TABLE_SIZE];
@@ -156,7 +172,7 @@ float fast_tanh(float x) {
     return (x > 0) ? y : -y;
 }
 
-// 推理函数
+/* 将一个编码器计数映射为补偿脉冲。input 和返回值均为项目内部标定单位。 */
 float nn_predict(float input) {
     float x = (input - scaler_x_mean) / scaler_x_scale;
     float layer_0_out[10];
@@ -177,7 +193,7 @@ float nn_predict(float input) {
     return output * scaler_y_scale + scaler_y_mean;
 }
 
-// 初始化tanh查找表
+/* 程序进入 main() 前构建 tanh 查找表；若启动环境不支持 constructor 属性，需手动调用。 */
 __attribute__((constructor))
 void init_tanh_table() {
     for (int i = 0; i < TANH_TABLE_SIZE; i++) {
@@ -190,7 +206,12 @@ void init_tanh_table() {
 
 
 
-void usart_printf(char *format,...)           //串口格式字符串输出
+/*
+ * 通过 UART8 输出调试文本。该函数使用阻塞发送，适合低频打印；不要从高频中断或
+ * 跟踪环调用，否则串口等待会破坏控制周期。String 固定为 100 字节，格式化字符串
+ * 和参数合计也必须小于该长度。
+ */
+void usart_printf(char *format,...)
 {
     int i =0;
     char String[100];         //定义输出字符串
@@ -213,7 +234,7 @@ void usart_printf(char *format,...)           //串口格式字符串输出
 
 
 
-//按键外部中断
+/* 按键外部中断只置位，不在中断中做显示、延时或电机操作。 */
 uint8_t PC4=0;
 uint8_t PB0=0;
 uint8_t PB2=0;
@@ -240,7 +261,12 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 
 
 uint8_t arrow = 0;
-uint8_t menu_state()   //菜单
+/*
+ * OLED 菜单：PB0/PB2 移动光标，PC4 确认并使能两个驱动器。
+ * 返回值 1~4 直接写入 control_state，0 表示仍停留在菜单。arrow 是 uint8_t，
+ * 因此调试菜单越界时要特别留意其回绕现象。
+ */
+uint8_t menu_state()
 {
   OLED_ShowStr(2,0,(uint8_t*)"track",16);
   OLED_ShowStr(2,2,(uint8_t*)"rightscan",16);
@@ -280,8 +306,10 @@ return arrow+1;
 
 uint32_t getMicros();
 
-/**
- * pid运算函数
+/*
+ * 位置 PID：err 为“当前值 - 目标值”或“目标值 - 当前值”，必须在同一轴内保持
+ * 符号约定一致。本实现使用 getMicros() 计算实际 dt，并将 P/I/D 的结果乘 dt 后
+ * 累加到 OUT；误差过零时清空积分，以降低换向后的积分残留。
  */
 float pid_calculate(pid_handler *pid,float err)
 {
@@ -309,6 +337,7 @@ float pid_calculate(pid_handler *pid,float err)
 
 
   pid->integral2 +=difftime*pid->integral;  //二次积分
+  /* 注意：历史代码此处用 integral（而非 integral2）做限幅；I2 输出目前未启用，故不改动行为。 */
   pid->integral2 = restrict(pid->integral,pid->inte_limit[0],pid->inte_limit[1]);
 
   //float I2OUT = pid->integral2*pid->I2;
@@ -338,7 +367,8 @@ float pid_calculate(pid_handler *pid,float err)
   return pid->OUT;
 }
 
-float LowPassFilterRun(LowPassFilter *Filter,float x)   //低通滤波器
+/* 一阶低通滤波；两次调用间隔超过 0.3 s 时直接采用新值，以避免恢复运行时突跳。 */
+float LowPassFilterRun(LowPassFilter *Filter,float x)
 {
     unsigned long timestamp = getMicros();
     float dt = (timestamp - Filter->timestamp_prev)*1e-6f;
@@ -357,9 +387,7 @@ float LowPassFilterRun(LowPassFilter *Filter,float x)   //低通滤波器
     return y;
 }
 
-/**
- * pid增量式(废弃)
- */
+/* 增量式 PID 的历史实现，主控制流程未调用，保留用于对比调试。 */
 float pid_calculate_increment(pid_handler *pid,float err)
 {
 	uint32_t now_time = getMicros();
@@ -382,9 +410,7 @@ float pid_calculate_increment(pid_handler *pid,float err)
 }
 
 
-/**
- * pid结构体复位
- */
+/* 切换控制模式、目标丢失或重新捕获时调用，避免沿用上一段运动的积分状态。 */
 void pid_reset(pid_handler *pid) {
     pid->integral = 0;
     pid->integral2 = 0;
@@ -399,7 +425,8 @@ void pid_reset(pid_handler *pid) {
 
 
 
-uint32_t getMicros()   //获取微秒
+/* 基于 SysTick 的微秒计时。返回值会随 uint32_t 溢出回绕，差值比较应使用无符号减法。 */
+uint32_t getMicros()
 {
   /* Ensure COUNTFLAG is reset by reading SysTick control and status register */
    (void)SysTick->CTRL;
@@ -413,7 +440,8 @@ uint32_t getMicros()   //获取微秒
   return (m * 1000 + (u * 1000) / tms);
 }
 
-void delay_us(uint32_t time)   //微秒延时
+/* 忙等待微秒延时：会占用 CPU，不适合用于长时间等待或中断上下文。 */
+void delay_us(uint32_t time)
 {
   uint32_t tick = getMicros();
   while ((getMicros()-tick)<time);
@@ -421,8 +449,10 @@ void delay_us(uint32_t time)   //微秒延时
 
 
 
-int pul_speed = 10;   //脉冲间隔(us)，运行插补算法时通过该值调节响应速度
+/* STEP 高、低电平各保持 pul_speed 微秒；数值越小，插补速度越高。 */
+int pul_speed = 10;
 
+/* 电机 2 的 STEP 脉冲：PA4。 */
 void generate_pul_2()
 {
   HAL_GPIO_WritePin(GPIOA,GPIO_PIN_4,1);
@@ -432,6 +462,7 @@ void generate_pul_2()
 }
 
 
+/* 电机 1 的 STEP 脉冲：PA6。 */
 void generate_pul_1()
 {
   HAL_GPIO_WritePin(GPIOA,GPIO_PIN_6,1);
@@ -439,25 +470,23 @@ void generate_pul_1()
   HAL_GPIO_WritePin(GPIOA,GPIO_PIN_6,0);
   delay_us(pul_speed);
 }
+/* 电机 2 的方向脚：PA5。 */
 void set_dir_2(uint8_t dir)
 {
   HAL_GPIO_WritePin(GPIOA,GPIO_PIN_5,dir);
 }
+/* 电机 1 的方向脚：PA7。该机构的方向与逻辑方向相反，所以这里取反。 */
 void set_dir_1(uint8_t dir)
 {
   HAL_GPIO_WritePin(GPIOA,GPIO_PIN_7,!dir);
 }
 
-/**
- * x轴步进
- */
+/* 逻辑 Y 轴对应电机 1（PA6/PA7）。名称与机械坐标不一致，调方向时以此为准。 */
 void step_motor1(uint8_t dir) {
     set_dir_1(dir);
     generate_pul_1();
 }
-/**
- * y轴步进
- */
+/* 逻辑 X 轴对应电机 2（PA4/PA5）。 */
 void step_motor2(uint8_t dir) {
     set_dir_2(dir);
     generate_pul_2();
@@ -515,9 +544,13 @@ void step_motor2(uint8_t dir) {
 //         }
 //     }
 // }
-#define DIR_CW    1     // 顺时针方向
-#define DIR_CCW   0     // 逆时针方向
-// 改进的Bresenham直线插补算法
+#define DIR_CW    1     // 逻辑正方向；实际顺逆时针仍取决于电机安装方向
+#define DIR_CCW   0
+/*
+ * 两轴直线插补：在主轴每走一步时，根据误差决定从轴是否补一步。
+ * x 坐标驱动电机 2，y 坐标驱动电机 1；这是“阻塞式”函数，直到全部脉冲发完才返回。
+ * 调试大位移运动前，请降低 pul_speed 或拆分目标点，避免长时间阻塞串口处理。
+ */
 void bresenham_line(int x0, int y0, int x1, int y1) 
 {
     if(x0 == x1 && y0 == y1) {
@@ -569,11 +602,12 @@ void bresenham_line(int x0, int y0, int x1, int y1)
 }
 
 
-float current_x = 0;   //当前x脉冲计数
-float current_y = 0;   //当前y脉冲计数
+/* 软件维护的逻辑脉冲位置；不是电机驱动器读取的真实位置，掉步后会与实际脱节。 */
+float current_x = 0;
+float current_y = 0;
 
 
-//绝对脉冲插补控制,阻塞式步进，返回后脉冲计数已达到目标位置
+/* 绝对脉冲插补。返回时软件位置已更新为目标值，不代表机构已通过传感器校验。 */
 void move_to_position(float target_x, float target_y) 
 {
     bresenham_line(current_x, current_y, (int)target_x, (int)target_y);
@@ -581,7 +615,7 @@ void move_to_position(float target_x, float target_y)
     current_y = target_y;
 }
 
-//相对脉冲插补控制(废弃)
+/* 相对插补的旧接口：不更新 current_x/current_y，主流程不应使用。 */
 void move_to_pul(float target_pulx, float target_puly)  
 {
   bresenham_line(0, 0, (int)target_pulx, (int)target_puly);
@@ -634,7 +668,8 @@ void draw_cos()   //正弦绘制
 }
 
 
-void laser_enable(uint8_t i)   //开关激光
+/* 激光使能脚：PB6。上电调试请先保持关闭，仅在受控靶场中开启。 */
+void laser_enable(uint8_t i)
 {
   HAL_GPIO_WritePin(GPIOB,GPIO_PIN_6,i);
 }
@@ -667,8 +702,9 @@ void laser_enable(uint8_t i)   //开关激光
 
 
 
-/**
- * 串口收发区
+/*
+ * 串口接收区。两个接收回调都会在末尾重新挂起 1 字节中断接收；若忘记重新挂起，
+ * 则只能收到第一个字节。状态机故意只做收包，完整包解析放在 finish 函数中。
  */
 
 uint8_t Maixcam_RX_stage=0;
@@ -676,9 +712,15 @@ uint8_t Maixcam_RX_data;
 uint8_t Maixcam_RX_fifo[2000] = {0};
 int Maixcam_RX_count =0;
 
-void maixcam_RX_finish();    //maixcam数据包接收完成回调
-void Maixcam_RX_callback()   //maixcam串口回调
+/*
+ * MaixCAM 帧格式：AA 12 | 5 个 little-endian int32 | 89 78。
+ * 载荷依次为目标 x、目标 y、激光 x、激光 y、目标半径；坐标为相机像素单位。
+ * 当前协议依靠帧尾判定，不含长度或校验；通信异常时优先抓取 UART1 原始字节确认。
+ */
+void maixcam_RX_finish();
+void Maixcam_RX_callback(UART_HandleTypeDef *huart)
 {
+  (void)huart;
   switch (Maixcam_RX_stage)
   {
   case 0:
@@ -726,7 +768,10 @@ void Maixcam_RX_callback()   //maixcam串口回调
 HAL_UART_Receive_IT(&huart1,&Maixcam_RX_data,1);
 }
 
-//g3507编码器通讯
+/*
+ * 车体 MSPM0G3507 帧格式：CA AC | int32 编码器计数 | uint8 转向状态 |
+ * uint8 圈计数 | 12 23。载荷按小端解释，STM32 与发送端必须使用相同 int 宽度。
+ */
 
 uint8_t g3507_RX_data=0;
 uint8_t g3507_RX_stage=0;
@@ -735,8 +780,9 @@ int g3507_RX_count =0;
 
 
 void g3507_RX_finish();
-void m0g3507_RX_callback()
+void m0g3507_RX_callback(UART_HandleTypeDef *huart)
 {
+  (void)huart;
   switch (g3507_RX_stage)
   {
   case 0:
@@ -832,8 +878,10 @@ float* kalman_y_redata;
 // pid_handler pidx;
 // pid_handler pidy;
 
-void maixcam_RX_finish()  //maixcam数据包接收完成回调
+/* 将已收齐的 MaixCAM 载荷解码为控制器使用的坐标变量。 */
+void maixcam_RX_finish()
 {
+  /* 发送端和本机均假定 int 为 32 位且为小端；更换平台时要检查这一前提。 */
   nxc1 =   *(int*)&Maixcam_RX_fifo[0];
   nyc1 =   *(int*)&Maixcam_RX_fifo[4];
   exc = *(int*)&Maixcam_RX_fifo[8];
@@ -869,6 +917,7 @@ int enconter =0;
 uint8_t turn=0;
 uint8_t turn_count=0;
 
+/* 将车体帧解码为编码器位置和转向/圈数状态。 */
 void g3507_RX_finish()
 {
   enconter = *(int*)(&g3507_RX_fifo[0]);
@@ -947,12 +996,14 @@ extern SensorData wit_data;
  * 串口收发区end
  */
 
-/**
- * pid控制区
+/*
+ * 控制状态：0 菜单；1 目标跟踪；2 向右扫描；3 向左扫描；4 圆周轨迹。
+ * 菜单的返回值会直接写入 control_state，新增菜单项时需同时在主循环添加 case。
  */
 
-uint8_t control_state=0;//控制选项  1:跟踪控制 ,2:右扫描,3:左扫描 .4:角度控制,0菜单
-uint8_t laser_control = 1; // 0:闭环激光控制1：开环激光控制
+uint8_t control_state=0;
+/* 0：以相机反馈的激光点为闭环；非 0：按预设激光目标/圆轨迹运行。 */
+uint8_t laser_control = 1;
 float init_angle_pid=0;
 float init_acc_pid=0;
 
@@ -965,14 +1016,17 @@ int nspeedy =0;
 int last_ly=0;
 
 
-int nxc=0;  //当前x坐标
-int nyc=0;  //当前y坐标
+/* Kalman 滤波后的目标坐标；nxc1/nyc1 是刚收到的原始相机坐标。 */
+int nxc=0;
+int nyc=0;
 
-int exc=210;  //期望x坐标
-int eyc=225;  //期望y坐标
+/* 闭环时的目标激光点坐标；MaixCAM 收包后会覆盖这两个值。 */
+int exc=210;
+int eyc=225;
 
-int oexc=195;//开环期望坐标
-int oeyc=235;  
+/* 开环模式固定瞄准的激光点坐标，需按相机安装位置标定。 */
+int oexc=195;
+int oeyc=235;
 
 
 
@@ -994,7 +1048,7 @@ pid_handler pidx = //x位置环
   .I2 = 0,
   .out_limit = {-10000,10000},
   .inte_limit = {-1000,1000},
-  .d_state=0,     //外部微分
+  .d_state=0,     // 使用 pid_calculate() 内部计算的误差差分
   .err_limit = 30,
   .acc_Feed =0    //外部前馈
 };
@@ -1007,7 +1061,7 @@ pid_handler pidx1 = //x位置环,近段
   .I2 = 4,
   .out_limit = {-10000,10000},
   .inte_limit = {-1000,1000},
-  .d_state=0,     //外部微分
+  .d_state=0,     // 使用 pid_calculate() 内部计算的误差差分
   .err_limit = 30,
   .acc_Feed =0    //外部前馈
 };
@@ -1046,12 +1100,13 @@ float compensate = 0.07;
 float maxcompensate = 0.145;
 float mincompensate = 0.07;
 
-float angle1_pul =8148.733086305041191366848684672;//弧度补偿
-float angle_pul=142.2222222222222; //角度补偿系数
-float acc_pul =0;//加速度补偿系数，没使用
+/* 机构/姿态标定参数。修改前应记录旧值，并在断开激光的情况下验证运动方向。 */
+float angle1_pul =8148.733086305041191366848684672; /* 编码器角度到 X 轴脉冲的比例 */
+float angle_pul=142.2222222222222;                  /* 机身偏航角（度）到 X 轴脉冲的比例 */
+float acc_pul =0;                                   /* 预留的加速度前馈比例，当前未使用 */
 float dis_para[4] = {
   -3726,-10934,-3000,3720
-}; //编码器位置角度补偿距离系数
+}; /* 四个转向区段的编码器位置到角度补偿系数 */
 
 
 float theta1=0;
@@ -1059,6 +1114,7 @@ float r1 = 100;
 float excir = 0;
 float eycir = 0;
 
+/* 用车体编码器角度更新目标圆周上的期望点，仅在 circle_state 非 0 时使用。 */
 void draw_circle_1()
 {
      excir =ridus* cos(-theta1) +nxc;
@@ -1113,6 +1169,7 @@ float feedenn=0;
 
 float enn2=0;
 
+/* 分段机构标定：输入为相对编码器计数，返回为 X 轴补偿脉冲。 */
 float fitting_calcu_0(int num)
 {
   float y = 0.000018*num*num + -0.361413*num;
@@ -1120,6 +1177,7 @@ float fitting_calcu_0(int num)
 }
 
 
+/* 第 1 段采用切比雪夫多项式，系数定义在文件开头。 */
 float fitting_calcu_1(int num)
 {
   //float y =0.000021*num*num + -0.467049*num + 180.342935;
@@ -1131,6 +1189,7 @@ float fitting_calcu_1(int num)
 
 
 
+/* 第 2 段采用二次多项式。 */
 float fitting_calcu_2(int num)
 {
   //float y =0.000021*num*num + -0.467049*num + 180.342935;
@@ -1142,6 +1201,7 @@ float fitting_calcu_2(int num)
 
 
 
+/* 备用神经网络拟合；主流程目前不调用。 */
 float fitting_calcu_3(int num)
 {
   //float y =0.000021*num*num + -0.467049*num + 180.342935;
@@ -1151,7 +1211,12 @@ float fitting_calcu_3(int num)
   return y;
 }
 
-void enconter_to_angle()  //编码器转换角度
+/*
+ * 把车体编码器计数换算为 X 轴补偿脉冲 enn1。
+ * 转向状态 turn==2 被视为区段切换：先保存上一段补偿值，再将本段的首个编码器
+ * 读数记为零点。不同区段使用不同拟合，相关参数都集中在 dis_para 和 fitting_calcu_*。
+ */
+void enconter_to_angle()
 {
   if( (turn_count-1)%4<0)
   {
@@ -1236,7 +1301,12 @@ void enconter_to_angle()  //编码器转换角度
 
 int last_counter=0;
 
-void track_pid_run()    //追踪pid运行
+/*
+ * 一次目标跟踪循环：
+ * 1. 首次进入时复位 PID；2. 每 20 ms 滤波相机坐标；3. 计算编码器/姿态补偿；
+ * 4. 计算 X/Y 位置 PID；5. 将脉冲目标交给阻塞式两轴插补。
+ */
+void track_pid_run()
 {
   
   if(Tfirstrun)            //判断是否要初始化pid结构体
@@ -1254,6 +1324,7 @@ void track_pid_run()    //追踪pid运行
   
   //pidx.acc_Feed = (facc-init_acc_pid)*acc_pul;   //加速度前馈补偿
 
+  /* 相机坐标滤波频率为 50 Hz；输入 nxc1/nyc1 仍在 UART 中断里更新。 */
   if((getMicros()-tick_kalman)>20000)
   {
     nxc = KalmanFilter(&kfpVarx,nxc1);
@@ -1265,7 +1336,7 @@ void track_pid_run()    //追踪pid运行
 
   enconter_to_angle();
 
-  if(laser_control==0) //激光点闭环标志位
+  if(laser_control==0)
   {
   a1 = pid_calculate(&pidx,nxc-exc);
   a2 = pid_calculate(&pidy,nyc-eyc);
@@ -1312,7 +1383,8 @@ void track_pid_run()    //追踪pid运行
   // a2 = pid_calculate(&pidy,eycir-eyc);
   //draw_circle_1();
 
-  if((getMicros()-tick_angle_buchang)>1000)   //1000us运行周期
+  /* 以 1 kHz 更新机身偏航造成的 X 轴补偿。 */
+  if((getMicros()-tick_angle_buchang)>1000)
   {
 
 //     if(fabs(wit_data.gyro[2])>60)   //角速度补偿
@@ -1373,7 +1445,8 @@ void track_pid_run()    //追踪pid运行
 
 float init_angle=0;
 static uint8_t Afirstrun=1; //pid初始运行标志位
-void angle_pid_run()        //角度环pid
+/* 仅用惯导 yaw 做角度闭环的试验接口，主状态机目前未调用。 */
+void angle_pid_run()
 {
   if(Afirstrun)            //判断是否要初始化pid结构体
   {
@@ -1407,7 +1480,8 @@ pid_handler Ppidx = //位置环(->角度环)xpid参数
 
 
 static uint8_t Pfirstrun=1;
-void position_pid_run()  
+/* 位置外环试验接口：将像素误差转换为期望偏航角 exangle。 */
+void position_pid_run()
 {
   if(Pfirstrun)            //判断是否要初始化pid结构体
   {
@@ -1429,7 +1503,11 @@ exangle = pid_calculate(&Ppidx,nxc-exc);
 
 
 int laser_ms_tick=0;
-void right_scan()  //向右扫描
+/*
+ * 向右单步扫描。首次进入时关闭激光并切换开环；相机同时识别到目标与激光点且
+ * 二者距离落入阈值时，切入状态 1 的闭环跟踪。每次调用只走一个脉冲。
+ */
+void right_scan()
 {
   static uint8_t i=1;
   if(i)
@@ -1454,7 +1532,8 @@ void right_scan()  //向右扫描
   }
 }
 
-void left_scan()  //向左扫描
+/* 与 right_scan() 对称，区别仅为电机 2 的逻辑方向。 */
+void left_scan()
 {
   static uint8_t i=1;
   if(i)
@@ -1543,7 +1622,7 @@ int main(void)
 
   /* USER CODE END SysInit */
 
-  /* Initialize all configured peripherals */
+  /* 初始化所有由 CubeMX 配置的外设；串口号与外部设备的对应关系见下方回调注册。 */
   MX_GPIO_Init();
   MX_USART1_UART_Init();
   MX_USART2_UART_Init();
@@ -1559,16 +1638,20 @@ int main(void)
   // WitSerialWriteRegister(JY901_SensorUartSend);  //注册陀螺仪发送函数
   // WitRegisterCallBack(JY901_SensorDataUpdata);   //注册接收回调函数
   // WitDelayMsRegister(HAL_Delay);    //注册ms延时函数
+  /* UART6：WIT 惯导。必须先注册回调，再启动第一次单字节接收。 */
   HAL_UART_RegisterCallback(&huart6,HAL_UART_RX_COMPLETE_CB_ID,WIT_callback);
   HAL_UART_Receive_IT(&huart6,&rx_buffer2,1);
 
+  /* UART1：MaixCAM 目标/激光点坐标。 */
   HAL_UART_RegisterCallback(&huart1,HAL_UART_RX_COMPLETE_CB_ID,Maixcam_RX_callback);
   HAL_UART_Receive_IT(&huart1,&Maixcam_RX_data,1);
 
+  /* UART4：车体 MSPM0G3507 的编码器与转向状态。 */
   HAL_UART_RegisterCallback(&huart4,HAL_UART_RX_COMPLETE_CB_ID,m0g3507_RX_callback);
   HAL_UART_Receive_IT(&huart4,&g3507_RX_data,1);
 
 
+  /* UART2/UART3：两台张大头步进驱动器；内部也会注册接收回调。 */
   zhang_motor_init();
 
   OLED_Init();
@@ -1584,14 +1667,14 @@ int main(void)
 // HAL_Delay(100);
 // zhang_motor_256_microsteps();//设置256细分
 // HAL_Delay(100);
+  /* 上电保持两个驱动器失能；只有在菜单确认后才会使能，便于先检查串口与传感器。 */
     zhang_motor_enable_x(0);
   HAL_Delay(100);
   zhang_motor_enable_y(0);
   HAL_Delay(100);
 
-
-
-laser_enable(0);          
+  /* 激光上电默认关闭。 */
+laser_enable(0);
   // laser_enable(0);
 
   
@@ -1612,9 +1695,10 @@ laser_enable(0);
  //usart_printf("%d\n",enconter);
 
 
+  /* 状态机始终在主循环运行；不要在 UART 回调里直接驱动电机。 */
   switch (control_state)
   {
-case 0:
+case 0: /* OLED 菜单选择模式 */
 
   control_state = menu_state(); //菜单
     break;
@@ -1623,13 +1707,14 @@ case 0:
     //  laser_control =0;
     // draw_circle_1();
 
-  case 1:
+  case 1: /* 目标跟踪 */
 
-    if((HAL_GetTick()-laser_ms_tick)>500)     //设置laser_ms_tick后,大于1s后自动开启激光
+    /* 成功捕获目标后等待 500 ms 再点亮激光，给机构稳定的时间。 */
+    if((HAL_GetTick()-laser_ms_tick)>500)
     {
       laser_enable(1);
     }
-    if(nxc1!=0&&nyc1!=0)   //追踪控制
+    if(nxc1!=0&&nyc1!=0)   /* 有效相机坐标才运行跟踪；0,0 被项目约定为未检测到。 */
     {
       //draw_circle_1();
     track_pid_run();
@@ -1640,15 +1725,15 @@ case 0:
     pid_reset(&pidy);
     }
     break;
-  case 2:
+  case 2: /* 向右扫描找目标 */
     state_qu = 1;
     right_scan();  //向左扫描，找到目标后进入目标追踪
     break;
-  case 3:
+  case 3: /* 向左扫描找目标 */
     state_qu = 1;
     left_scan();
     break;
-  case 4:
+  case 4: /* 圆周目标轨迹；随后复用状态 1 的跟踪流程 */
     circle_state =1;
     control_state =1;
     break;

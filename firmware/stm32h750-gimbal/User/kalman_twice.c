@@ -1,6 +1,10 @@
 #include "kalman_twice.h"
 
-/* second-order kalman filter on stm32 */
+/*
+ * 二阶卡尔曼滤波器：状态 xhat = [位置, 速度]^T。实现依赖 CMSIS-DSP 矩阵函数，矩阵
+ * 维度固定为 2x2/2x1。main.c 当前使用更轻量的一维 KalmanFilter()；本文件保留为
+ * 需要同时估计速度时的可选实现。
+ */
 
 
 
@@ -9,6 +13,7 @@
 
 
 
+/* 绑定外部数组并计算 A、H 的转置。调用前先写好 I 中的矩阵数值。 */
 void kalman_filter_init(kalman_filter_t *F, kalman_filter_init_t *I)
 {
   mat_init(&F->xhat, 2, 1, I->xhat_data);
@@ -32,6 +37,10 @@ void kalman_filter_init(kalman_filter_t *F, kalman_filter_init_t *I)
 }
 
 
+/*
+ * 按“预测 -> 计算增益 -> 用新测量修正 -> 更新协方差”的顺序执行一次滤波。
+ * signal1/2 分别对应 z 的两个分量；如果 H 只测位置，第二个信号通常传 0。
+ */
 float *kalman_filter_calc(kalman_filter_t *F, float signal1, float signal2)
 {
   float TEMP_data[4] = {0, 0, 0, 0};
@@ -86,6 +95,10 @@ kalman_filter_t kalmanY;
 
 
 
+/*
+ * 设置 X/Y 两轴的模型与噪声参数，并完成矩阵绑定。A 的 0.05 是模型的采样间隔（秒），
+ * 若实际调用周期改变，必须与 Q 一起重新标定；否则速度估计和滤波响应都会失真。
+ */
 void motor_kalman_init()
 {
 
@@ -172,12 +185,14 @@ kalman_filter_init(&kalmanY, &IY);
 }
 
 
+/* 用当前位置更新 X 轴滤波器；返回数组第 0 项为位置估计。 */
 float *kalman_calcu_x(float now_pos)
 {
 return kalman_filter_calc(&kalmanX, now_pos, 0);
 }
 
 
+/* 用当前位置更新 Y 轴滤波器；返回数组第 0 项为位置估计。 */
 float *kalman_calcu_y(float now_pos)
 {
 return kalman_filter_calc(&kalmanY, now_pos, 0);

@@ -10,14 +10,18 @@
 
  
  
+/*
+ * 一维标量卡尔曼滤波器。每个坐标轴使用一份独立实例：输入是测量值，输出是平滑后的
+ * 估计值。Q 越大越相信状态变化、跟随越快；R 越大越不相信测量、输出越平滑。
+ */
 //1. 结构体类型定义
  struct KFPTypeS
 {
-    float P; //估算协方差
-    float G; //卡尔曼增益
-    float Q; //过程噪声协方差,Q增大，动态响应变快，收敛稳定性变坏
-    float R; //测量噪声协方差,R增大，动态响应变慢，收敛稳定性变好
-    float Output; //卡尔曼滤波器输出 
+    float P;      // 估计误差协方差
+    float G;      // 卡尔曼增益（每次调用自动更新）
+    float Q;      // 过程噪声协方差：增大则跟随更快，但更容易抖动
+    float R;      // 测量噪声协方差：增大则更平滑，但响应更慢
+    float Output; // 上一次滤波输出，也是下一次的预测基础
 }; //Kalman Filter parameter type Struct
 typedef struct KFPTypeS KFPTypeS_Struct;
 typedef KFPTypeS_Struct *KFPType_Struct;
@@ -32,11 +36,11 @@ typedef KFPTypeS_Struct *KFPType_Struct;
 //    0 //卡尔曼滤波器输出. 初始化值为 0
 //};
  
+/* 用一条新测量值更新滤波器并返回滤波结果。调用频率改变后通常需要重新调 Q、R。 */
 float KalmanFilter(KFPType_Struct kfp, float input);
 
 
 
 
 #endif /* KALMAN_h */
-
 

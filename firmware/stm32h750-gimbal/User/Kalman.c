@@ -1,15 +1,9 @@
 #include "Kalman.h"
 
-/*************************************************************
-** Function name:      MCU_Open_interrupt
-** Descriptions:       卡尔曼滤波器 函数
-** Input parameters:   *kfp    - 卡尔曼结构体参数
-** Input parameters:   input   - 需要滤波的参数的测量值（即传感器的采集值）
-** Output parameters:  卡尔曼滤波器输出值（最优值）
-** Returned value:     卡尔曼滤波器输出值（最优值）
-** Created by:         qkk
-** Created date:       2024-01-15
-*************************************************************/
+/*
+ * 标量卡尔曼滤波的一次更新。先使用 Q 预测本次估计误差，再使用 R 计算测量的权重，
+ * 最后修正 Output。该实现不检查空指针，因此调用前必须传入已初始化的结构体地址。
+ */
 
 float KalmanFilter(KFPType_Struct kfp, float input)
 {
@@ -27,4 +21,3 @@ float KalmanFilter(KFPType_Struct kfp, float input)
  
      return kfp->Output;
 }
- 

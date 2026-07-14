@@ -12,11 +12,15 @@
 #define mat_inv     arm_mat_inverse_f32
 typedef struct
 {
-  float raw_value;
-  float filtered_value[2];
+  float raw_value;          /* 预留的原始值字段，当前未在计算中使用 */
+  float filtered_value[2];  /* 输出状态 [位置, 速度] */
   mat xhat, xhatminus, z, A, H, AT, HT, Q, R, P, Pminus, K;
 } kalman_filter_t;
 
+/*
+ * 二阶（位置 + 速度）卡尔曼滤波器的实际存储区。CMSIS 矩阵对象只保存指针和尺寸，
+ * 因此此结构体必须在滤波器整个生命周期内有效，不能用函数内局部变量替代。
+ */
 typedef struct
 {
   float raw_value;
@@ -30,9 +34,12 @@ typedef struct
   float R_data[4];
 } kalman_filter_init_t;
 
+/* 把存储区绑定到 CMSIS-DSP 矩阵对象，并由 A/H 生成其转置矩阵。 */
 void kalman_filter_init(kalman_filter_t *F, kalman_filter_init_t *I);
+/* 输入本周期的两个测量量，返回 [位置估计, 速度估计]。 */
 float *kalman_filter_calc(kalman_filter_t *F, float signal1, float signal2);
 
+/* 初始化 X/Y 两套滤波器。若要启用 kalman_calcu_x/y，必须先调用一次。 */
 void motor_kalman_init();
 float *kalman_calcu_x(float now_pos);
 float *kalman_calcu_y(float now_pos);
