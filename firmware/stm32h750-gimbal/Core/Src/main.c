@@ -39,6 +39,21 @@
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 /*
+ * 云台手动运动自检开关。
+ *
+ * 0：正常的菜单/视觉跟踪程序（默认，安全）；
+ * 1：上电后只运行一次低速的 X、Y 轴往返测试，然后关闭驱动器并停住。
+ *
+ * 第一次测试请只把每轴脉冲数设为 5，确认方向、限位和机构无干涉后再逐步增加。
+ * 测试模式强制关闭激光，不读取相机、车体或惯导数据。
+ */
+#define GIMBAL_MOTION_TEST_ENABLED        0
+#define GIMBAL_TEST_X_STEPS                5U
+#define GIMBAL_TEST_Y_STEPS                5U
+#define GIMBAL_TEST_PULSE_INTERVAL_US   1000U
+#define GIMBAL_TEST_SETTLE_TIME_MS      1000U
+
+/*
  * 云台控制的数据流（调试时建议按此顺序观察）：
  *
  * MaixCAM(UART1) 给出目标/激光点像素坐标 ─┐
@@ -1558,6 +1573,61 @@ void left_scan()
   }
 }
 
+#if GIMBAL_MOTION_TEST_ENABLED
+/*
+ * 安全的云台基础运动自检。
+ *
+ * 顺序：使能两轴 -> X 正向/反向各固定脉冲数 -> Y 正向/反向各固定脉冲数 -> 失能两轴。
+ * 这是开环脉冲测试，不会自动寻找零点，也不会检测机械限位；测试前必须确认两个
+ * 方向至少都有足够的活动空间。
+ */
+static void gimbal_motion_test_run(void)
+{
+  int saved_pulse_interval = pul_speed;
+
+  laser_enable(0);
+  pul_speed = GIMBAL_TEST_PULSE_INTERVAL_US;
+
+  /* 与菜单确认时相同的驱动器使能时序。 */
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_RESET);
+  zhang_motor_enable_x(1);
+  HAL_Delay(100);
+  zhang_motor_enable_y(1);
+  HAL_Delay(100);
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_SET);
+  HAL_Delay(GIMBAL_TEST_SETTLE_TIME_MS);
+
+  /* X 轴（电机 2，PA4/PA5）正向发固定脉冲数，再按相反方向返回。 */
+  for (uint32_t step = 0; step < GIMBAL_TEST_X_STEPS; step++)
+  {
+    step_motor2(DIR_CW);
+  }
+  HAL_Delay(GIMBAL_TEST_SETTLE_TIME_MS);
+  for (uint32_t step = 0; step < GIMBAL_TEST_X_STEPS; step++)
+  {
+    step_motor2(DIR_CCW);
+  }
+  HAL_Delay(GIMBAL_TEST_SETTLE_TIME_MS);
+
+  /* Y 轴（电机 1，PA6/PA7）正向发固定脉冲数，再按相反方向返回。 */
+  for (uint32_t step = 0; step < GIMBAL_TEST_Y_STEPS; step++)
+  {
+    step_motor1(DIR_CW);
+  }
+  HAL_Delay(GIMBAL_TEST_SETTLE_TIME_MS);
+  for (uint32_t step = 0; step < GIMBAL_TEST_Y_STEPS; step++)
+  {
+    step_motor1(DIR_CCW);
+  }
+  HAL_Delay(GIMBAL_TEST_SETTLE_TIME_MS);
+
+  laser_enable(0);
+  zhang_motor_enable_x(0);
+  zhang_motor_enable_y(0);
+  pul_speed = saved_pulse_interval;
+}
+#endif
+
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -1676,6 +1746,19 @@ int main(void)
   /* 激光上电默认关闭。 */
 laser_enable(0);
   // laser_enable(0);
+
+#if GIMBAL_MOTION_TEST_ENABLED
+  /*
+   * 自检结束后停在这里：不进入菜单、不启动扫描，也不会因相机/串口数据误触发运动。
+   * 若要回到正常程序，只需把文件开头的 GIMBAL_MOTION_TEST_ENABLED 改回 0。
+   */
+  gimbal_motion_test_run();
+  while (1)
+  {
+    laser_enable(0);
+    HAL_Delay(1000);
+  }
+#endif
 
   
   /* USER CODE END 2 */
