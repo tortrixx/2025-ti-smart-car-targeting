@@ -1,4 +1,4 @@
-# Embedded build products and IDE state
+# Local agent state, embedded build products, and IDE sessions
 .agents/
 **/build/
 **/Objects/
@@ -22,12 +22,12 @@
 **/JLinkLog.txt
 **/JLinkSettings.ini
 
-# Unused CMSIS-DSP distributions; retain the library used by the H750 CMake build.
-附件二：源码/云台main源码/TIcup_AutoTrackerCar-main/Drivers/CMSIS/DSP/Examples/
-附件二：源码/云台main源码/TIcup_AutoTrackerCar-main/Drivers/CMSIS/DSP/DSP_Lib_TestSuite/
-附件二：源码/云台main源码/TIcup_AutoTrackerCar-main/Drivers/CMSIS/DSP/PythonWrapper/
-附件二：源码/云台main源码/TIcup_AutoTrackerCar-main/Drivers/CMSIS/DSP/Documentation/
-附件二：源码/云台main源码/TIcup_AutoTrackerCar-main/Drivers/CMSIS/DSP/Lib/ARM/
-附件二：源码/云台main源码/TIcup_AutoTrackerCar-main/Drivers/CMSIS/DSP/Lib/IAR/
-附件二：源码/云台main源码/TIcup_AutoTrackerCar-main/Drivers/CMSIS/DSP/Lib/GCC/*.a
-!附件二：源码/云台main源码/TIcup_AutoTrackerCar-main/Drivers/CMSIS/DSP/Lib/GCC/libarm_cortexM7lfsp_math.a
+# Keep only the CMSIS-DSP binary used by the STM32H750 CMake build.
+**/Drivers/CMSIS/DSP/Examples/
+**/Drivers/CMSIS/DSP/DSP_Lib_TestSuite/
+**/Drivers/CMSIS/DSP/PythonWrapper/
+**/Drivers/CMSIS/DSP/Documentation/
+**/Drivers/CMSIS/DSP/Lib/ARM/
+**/Drivers/CMSIS/DSP/Lib/IAR/
+**/Drivers/CMSIS/DSP/Lib/GCC/*.a
+!**/Drivers/CMSIS/DSP/Lib/GCC/libarm_cortexM7lfsp_math.a
