@@ -1,0 +1,33 @@
+# Embedded build products and IDE state
+.agents/
+**/build/
+**/Objects/
+**/Listings/
+**/.vscode/
+**/*.o
+**/*.obj
+**/*.axf
+**/*.elf
+**/*.hex
+**/*.map
+**/*.lst
+**/*.d
+**/*.dep
+**/*.crf
+**/*.htm
+**/*.uvoptx
+**/*.uvguix.*
+**/*.jdebug
+**/*.jdebug.user
+**/JLinkLog.txt
+**/JLinkSettings.ini
+
+# Unused CMSIS-DSP distributions; retain the library used by the H750 CMake build.
+附件二：源码/云台main源码/TIcup_AutoTrackerCar-main/Drivers/CMSIS/DSP/Examples/
+附件二：源码/云台main源码/TIcup_AutoTrackerCar-main/Drivers/CMSIS/DSP/DSP_Lib_TestSuite/
+附件二：源码/云台main源码/TIcup_AutoTrackerCar-main/Drivers/CMSIS/DSP/PythonWrapper/
+附件二：源码/云台main源码/TIcup_AutoTrackerCar-main/Drivers/CMSIS/DSP/Documentation/
+附件二：源码/云台main源码/TIcup_AutoTrackerCar-main/Drivers/CMSIS/DSP/Lib/ARM/
+附件二：源码/云台main源码/TIcup_AutoTrackerCar-main/Drivers/CMSIS/DSP/Lib/IAR/
+附件二：源码/云台main源码/TIcup_AutoTrackerCar-main/Drivers/CMSIS/DSP/Lib/GCC/*.a
+!附件二：源码/云台main源码/TIcup_AutoTrackerCar-main/Drivers/CMSIS/DSP/Lib/GCC/libarm_cortexM7lfsp_math.a
