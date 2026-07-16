@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<projectSpec>
+    <applicability>
+        <when><context deviceFamily="ARM" deviceId="MSPM0G3507"/></when>
+    </applicability>
+    <project
+        title="Smart car CCD controller"
+        name="smart_car_ccd_MSPM0G3507_nortos_ticlang"
+        configurations="Debug"
+        toolChain="TICLANG"
+        connection="TIXDS110_Connection.xml"
+        device="MSPM0G3507"
+        ignoreDefaultDeviceSettings="true"
+        ignoreDefaultCCSSettings="true"
+        products="MSPM0-SDK;sysconfig"
+        compilerBuildOptions="
+            -I${PROJECT_ROOT}
+            -I${PROJECT_ROOT}/${ConfigName}
+            -O2
+            @device.opt
+            -I${COM_TI_MSPM0_SDK_INSTALL_DIR}/source/third_party/CMSIS/Core/Include
+            -I${COM_TI_MSPM0_SDK_INSTALL_DIR}/source
+            -gdwarf-3
+            -mcpu=cortex-m0plus
+            -march=thumbv6m
+            -mfloat-abi=soft
+            -mthumb
+            -Wall
+        "
+        linkerBuildOptions="
+            -ldevice.cmd.genlibs
+            -L${COM_TI_MSPM0_SDK_INSTALL_DIR}/source
+            -L${PROJECT_ROOT}
+            -L${PROJECT_BUILD_DIR}/syscfg
+            -Wl,--rom_model
+            -Wl,--warn_sections
+            -L${CG_TOOL_ROOT}/lib
+            -llibc.a
+        "
+        sysConfigBuildOptions="
+            --output .
+            --product ${COM_TI_MSPM0_SDK_INSTALL_DIR}/.metadata/product.json
+            --compiler ticlang
+        "
+        sourceLookupPath="${COM_TI_MSPM0_SDK_INSTALL_DIR}/source/ti/driverlib"
+        description="128-pixel CCD acquisition and UART output controller">
+        <property name="buildProfile" value="release"/>
+        <property name="isHybrid" value="true"/>
+        <file path="../adc12_single_conversion.c" action="link" targetDirectory="" openOnCreation="true" excludeFromBuild="false"/>
+        <file path="../adc12_single_conversion.syscfg" action="link" targetDirectory="" openOnCreation="false" excludeFromBuild="false"/>
+        <file path="${COM_TI_MSPM0_SDK_INSTALL_DIR}/source/ti/devices/msp/m0p/startup_system_files/ticlang/startup_mspm0g350x_ticlang.c" action="link" targetDirectory="startup" openOnCreation="false" excludeFromBuild="false"/>
+        <file path="../board.c" action="link" targetDirectory="" openOnCreation="false" excludeFromBuild="false"/>
+        <file path="../board.h" action="copy" targetDirectory="" openOnCreation="false" excludeFromBuild="false"/>
+        <file path="../drv_oled.c" action="link" targetDirectory="" openOnCreation="false" excludeFromBuild="false"/>
+        <file path="../drv_oled.h" action="copy" targetDirectory="" openOnCreation="false" excludeFromBuild="false"/>
+        <file path="../ssd1306.c" action="link" targetDirectory="" openOnCreation="false" excludeFromBuild="false"/>
+        <file path="../ssd1306.h" action="copy" targetDirectory="" openOnCreation="false" excludeFromBuild="false"/>
+        <file path="README.md" action="copy" openOnCreation="false" excludeFromBuild="false"/>
+    </project>
+</projectSpec>

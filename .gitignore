@@ -1,5 +1,7 @@
 # Local agent state, embedded build products, and IDE sessions
 .agents/
+/tmp/
+/*.zip
 **/build/
 **/Objects/
 **/Listings/
