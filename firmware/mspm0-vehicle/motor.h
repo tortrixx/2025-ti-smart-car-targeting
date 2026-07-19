@@ -8,8 +8,8 @@
  * motor.h - AT8236 dual motor driver (software PWM)
  *
  * 硬件连接 / Hardware:
- *   左电机: AT8236 AIN1=PA12, AIN2=PA13 (TIMG0)
- *   右电机: AT8236 BIN1=PA28, BIN2=PA31 (TIMG7)
+ *   左电机: AT8236 AIN1=PA12, AIN2=PA13 → TIMG0
+ *   右电机: AT8236 BIN1=PA28, BIN2=PA31 → TIMG7
  *
  * PWM方式 / PWM method:
  *   软件PWM: 20步/周期, 每1ms更新一次, PWM频率≈50Hz
