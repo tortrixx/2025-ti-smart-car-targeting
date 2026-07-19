@@ -1,346 +1,183 @@
 /*
- * Copyright (c) 2021, Texas Instruments Incorporated
- * All rights reserved.
+ * empty.c - MSPM0G3507 自动循迹小车主程序
+ * empty.c - MSPM0G3507 Line-Following Car Main
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
+ * 2025年电赛基础部分: 正方形环形黑线自动循迹
+ * 2025 Competition Basic Task: Auto track square loop black line
  *
- * *  Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
+ * 参考已验证项目校准 / Calibrated against proven reference project
  *
- * *  Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
+ * 硬件 / Hardware:
+ *   - MSPM0G3507 LaunchPad
+ *   - 8路GPIO数字灰度传感器 (X1~X8)
+ *   - AT8236双路电机驱动
  *
- * *  Neither the name of Texas Instruments Incorporated nor the names of
- *    its contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
+ * 架构 / Architecture:
+ *   - 每1ms: Motor_UpdateSoftwarePwm() 更新软件PWM
+ *   - 每10ms: LineFollower_Task() 执行循迹算法（直接设置电机速度）
  *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
- * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
- * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
- * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
- * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
- * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
- * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
- * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
- * EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * 模式选择 / Mode Select:
+ *   #define FORCE_MOTOR_STOP_TEST 1    → 仅停止电机 (安全验证)
+ *   #define SENSOR_RAW_DEBUG 1         → 仅调试传感器原始值
+ *   #define TRACKING_ALGORITHM_DEBUG 1 → 完整循迹 + 电机强制关闭 (debugger观察)
+ *   都不定义                           → 正常循迹模式
  */
+
+#define FORCE_MOTOR_STOP_TEST       0
+#define FORCE_STRAIGHT_FORWARD_TEST 0
+#define SENSOR_RAW_DEBUG            0
+#define TRACKING_ALGORITHM_DEBUG    0
+
 #include "ti_msp_dl_config.h"
 
-#include "device_imu660ra.h"
-#include "poseCalculate.h"
-#include "Navigation.h"
+#include "line_follow.h"
+#include "line_sensor.h"
+#include "motor.h"
 
-#include "drv_oled.h"
-#include "encoder.h"
-#include "motor.h" 
-
-void uart0_init(void)
+#if SENSOR_RAW_DEBUG
+static uint8_t count_raw_ones(uint8_t raw)
 {
-	NVIC_ClearPendingIRQ(UART_0_INST_INT_IRQN);
-	NVIC_EnableIRQ(UART_0_INST_INT_IRQN);
+    uint8_t count = 0U;
+    uint8_t i;
+
+    for (i = 0U; i < 8U; i++) {
+        if (((raw >> i) & 0x01U) != 0U) {
+            count++;
+        }
+    }
+
+    return count;
+}
+#endif
+
+static void simple_delay_ms(uint32_t ms)
+{
+    volatile uint32_t i;
+    while (ms--) {
+        for (i = 0U; i < 4000U; i++) {
+            __asm volatile ("nop");
+        }
+    }
 }
 
-uint8_t gEchoData,NOW_black,NOW_black_cnt;
-uint32_t cntre=0;
-
-
-union Data {
-int ecogo;
-char ecogou8[4];
-} data;
-
-
-
-uint8_t xuanquan=0,zhuanjiao=0,yvxuanquan=0,Tzhuanjiao;//תȦ�����������������������������������!
 int main(void)
 {
+    uint8_t control_tick = 0U;
+
     SYSCFG_DL_init();
-		NVIC_ClearPendingIRQ(UART_0_INST_INT_IRQN);
-    NVIC_EnableIRQ(UART_0_INST_INT_IRQN);
-		oled_init();//oled��ʾ����ʼ��
-//	
-		while(0){}//bmi270��ʼ��
-			
-		 //Sensor_GyroOffsetCalc();//��ƮУ׼
-			
-		//Sensor_Gyro_Give_Directly();//��Ʈ����
-		
-		
-		NVIC_EnableIRQ(PIT_FOR_CUSTOM_INST_INT_IRQN);
-    DL_TimerG_startCounter(PIT_FOR_CUSTOM_INST); //��ʱ���ж�����
-			
-		EXTI_Init();//�������ж�����
-		motor_init();//PWM��ʼ�����ɲ��
-//		motor_a(2000);
-//		motor_b(-2000);
-		
-			display_6_8_string(0,4,"7");
-			display_6_8_string(20,4,"8");
-			display_6_8_string(40,4,"9");
-			display_6_8_string(60,4,"10");
-			display_6_8_string(0,5,"1");
-			display_6_8_string(20,5,"2");
-			display_6_8_string(40,5,"3");
-			display_6_8_string(60,5,"4");
-			int cnt1=0,cnt2=0,cnt3=0,cnt4=0;
+    simple_delay_ms(500);
+    Motor_Init();
+
+#if FORCE_MOTOR_STOP_TEST
     while (1) {
-		cnt1=0,cnt2=0,cnt3=0,cnt4=0;
-		display_6_8_string(0,0,"QUANshu");
-		display_6_8_number(50,0,xuanquan);
-		display_6_8_string(0,1,"JIAOshu");
-		display_6_8_number(50,1,zhuanjiao);
-		display_6_8_string(0,2,"YUQUANshu");
-		display_6_8_number(70,2,yvxuanquan);
-		display_6_8_number(0,6,encoder1_num);display_6_8_number(64,6,NOW_black);
-	if(!DL_GPIO_readPins(GPIOB,DL_GPIO_PIN_7))
-	{
-	while(!DL_GPIO_readPins(GPIOB,DL_GPIO_PIN_7))
-	{
-	cnt1++;
-	delay_ms(5);
-	}
-	if(cnt1>20)
-	{
-		if(yvxuanquan<10)
-		yvxuanquan+=1;
-		else
-		yvxuanquan=1;
-	}
-	}
-		
-	else if(!DL_GPIO_readPins(GPIOB,DL_GPIO_PIN_8))
-	{
-	while(!DL_GPIO_readPins(GPIOB,DL_GPIO_PIN_8))
-	{
-	cnt2++;
-	delay_ms(5);
-	}
-	if(cnt2>20)
-	{
-		xuanquan=yvxuanquan;
-	}
-	}
-	
-	else if(!DL_GPIO_readPins(GPIOB,DL_GPIO_PIN_9))
-	{
-	while(!DL_GPIO_readPins(GPIOB,DL_GPIO_PIN_9))
-	{
-	cnt3++;
-	delay_ms(5);
-	}
-	if(cnt3>20)
-	{
-		xuanquan=0;
-	}
-	}
-	
-	else if(!DL_GPIO_readPins(GPIOB,DL_GPIO_PIN_10))
-	{
-	while(!DL_GPIO_readPins(GPIOB,DL_GPIO_PIN_10))
-	{
-	cnt4++;
-	delay_ms(5);
-	}
-	if(cnt4>20)
-	{
-		if(yvxuanquan>1)
-		yvxuanquan-=1;
-		else
-		yvxuanquan=10;
-	}
-	}
-	
-			delay_ms(100);
-		//printf("%f,%f,%f,%f,%d\r\n",v_A,v_B,Tj_A,Tj_B,encoder1_num);
- 
-		}
-		
- }
- 
-uint64_t timm,settima,settimb,settim_flaga=1,settim_flagb=1;
- uint8_t flagz=0,zhuangtai=0;
- int eeco1=0,eeco2=0,eecof=0;
-//Timer interrupt function(1ms)
-void PIT_FOR_CUSTOM_INST_IRQHandler(void)
-{
-	static int count = 0;
- 
-    switch( DL_TimerG_getPendingInterrupt(PIT_FOR_CUSTOM_INST) )
+        Motor_Stop();
+        Motor_UpdateSoftwarePwm();
+        simple_delay_ms(1);
+    }
+
+#elif FORCE_STRAIGHT_FORWARD_TEST
+    /*
+     * 强制直行 (验证电机方向和左右一致性)
+     */
+    LineSensor_Init();
+    while (1) {
+        if (control_tick == 0U) {
+            Motor_SetSpeeds(120, 120);
+        }
+        Motor_UpdateSoftwarePwm();
+        simple_delay_ms(1);
+        control_tick++;
+        if (control_tick >= 10U) {
+            control_tick = 0U;
+        }
+    }
+
+#elif SENSOR_RAW_DEBUG
+    /*
+     * 传感器原始值调试
+     *
+     * CCS Expressions 观察:
+     *   g_debug_line_raw   → 原始8位值
+     *   g_debug_line_count → 高电平位数
+     *   g_debug_line_ok    → 读取成功标志
+     *   LineSensor_GetWhitePattern() → 校准白值
+     *   LineSensor_IsCalibrated()    → 校准是否通过
+     */
     {
-        case DL_TIMER_IIDX_LOAD:
-//			ticks++;
-		    //IMU pose calculate task(every 5ms)
-			count++;
-				timm++;
-			if(count%10==0)
-			{
-			if(xuanquan)
-			{
-				if(Tzhuanjiao==0)
-				{
-//					Tj_A=20;
-//					Tj_B=20;
-					DL_GPIO_clearPins(GPIOA,DL_GPIO_PIN_12);
-				}
-				else
-					DL_GPIO_setPins(GPIOA,DL_GPIO_PIN_12);
-				
-				
-				Tzhuanjiao=xuanquan*4;
-				
-				if(DL_GPIO_readPins(GPIOA,DL_GPIO_PIN_15)&&flagz==0)
-				{
-					flagz=1;
-					Tj_A=0;Tj_B=0;Tl_B=0;Tl_A=0;
-					eeco1=encoder1_num;
-					eeco2=encoder2_num;
-				}
-				if(flagz==1){
-				Tj_A=0;
-				Tj_B=20;
-				if(zhuanjiao==Tzhuanjiao)
-					{
-					xuanquan=0;
-					zhuanjiao=0;
-					DL_GPIO_clearPins(GPIOA,DL_GPIO_PIN_12);
-						
-					}	
-				if(eeco2-encoder2_num>1300)
-				{
-					eeco2=encoder2_num;eeco1=encoder1_num;
-					flagz=0;
-					zhuanjiao++;
-					if(zhuanjiao%4==1)
-					{
-//					Tj_A=0;
-//					Tj_B=0;
-					settim_flaga=0;
-					settim_flagb=0;
-					}
-					else
-					{
-					settim_flaga=2;
-					settim_flagb=2;						
-					Tj_A=30;
-					Tj_B=30;
-					}
+        volatile uint8_t g_debug_line_raw;
+        volatile uint8_t g_debug_line_count;
+        volatile bool g_debug_line_ok;
 
-				}
-				}
-					
-			}
-			else
-			{
-				DL_GPIO_setPins(GPIOA,DL_GPIO_PIN_12);
-			Tj_A=0;Tj_B=0;Tl_B=0;Tl_A=0;
-			}
-					data.ecogo=-encoder1_num;
-					DL_UART_transmitDataBlocking(UART_0_INST, 0xCA);
-					DL_UART_transmitDataBlocking(UART_0_INST, 0xAC);
-					DL_UART_transmitDataBlocking(UART_0_INST, data.ecogou8[0]);
-					DL_UART_transmitDataBlocking(UART_0_INST, data.ecogou8[1]);
-					DL_UART_transmitDataBlocking(UART_0_INST, data.ecogou8[2]);
-					DL_UART_transmitDataBlocking(UART_0_INST, data.ecogou8[3]);
-					DL_UART_transmitDataBlocking(UART_0_INST, flagz+1);
-					DL_UART_transmitDataBlocking(UART_0_INST, zhuanjiao);		
-					DL_UART_transmitDataBlocking(UART_0_INST, 0x12);
-					DL_UART_transmitDataBlocking(UART_0_INST, 0x23);	
+        LineSensor_Init();
 
+        while (1) {
+            g_debug_line_ok = LineSensor_ReadRaw(&g_debug_line_raw);
+            if (g_debug_line_ok) {
+                g_debug_line_count = count_raw_ones(g_debug_line_raw);
+            }
 
-//					data.ecogo=-encoder1_num;
-//					zhuangtai=((zhuanjiao%4+1)<<4)+flagz;
-//					DL_UART_transmitDataBlocking(UART_0_INST, 0xCA);
-//					DL_UART_transmitDataBlocking(UART_0_INST, 0xAC);
-//					DL_UART_transmitDataBlocking(UART_0_INST, data.ecogou8[0]);
-//					DL_UART_transmitDataBlocking(UART_0_INST, data.ecogou8[1]);
-//					DL_UART_transmitDataBlocking(UART_0_INST, data.ecogou8[2]);
-//					DL_UART_transmitDataBlocking(UART_0_INST, data.ecogou8[3]);
-//					DL_UART_transmitDataBlocking(UART_0_INST, zhuangtai);		
-//					DL_UART_transmitDataBlocking(UART_0_INST, 0x12);
-//					DL_UART_transmitDataBlocking(UART_0_INST, 0x23);
-
-			
-			motor_handle();
-			}
-			if(count%20==0)
-			{
-				
-
-				
-				if(xuanquan)
-			{
-				if(flagz==0&&NOW_black_cnt<=35)
-				findli(61,NOW_black);  //61
-				if(flagz==0)
-				{
-				if(settim_flaga==0){settim_flaga=1;settima=timm;}if(settim_flaga==1){if(jiasuA(10,25,settima,settima+700,timm)==0){settim_flaga=2;}}	
-				if(settim_flagb==0){settim_flagb=1;settimb=timm;}if(settim_flagb==1){if(jiasuB(10,25,settimb,settimb+700,timm)==0){settim_flagb=2;}}
-				
-				if(eeco2-encoder2_num>5500)
-				{
-				if(settim_flaga==2){settim_flaga=3;settima=timm;}if(settim_flaga==3){if(jiasuA(35,-25,settima,settima+700,timm)==0){settim_flaga=4;}}	
-				if(settim_flagb==2){settim_flagb=3;settimb=timm;}if(settim_flagb==3){if(jiasuB(35,-25,settimb,settimb+700,timm)==0){settim_flagb=4;}}
-				}
-				
-//				if(settim_flaga==4)
-//				{				
-//					Tj_A=0;
-//					Tj_B=0;
-//				}
-				
-				
-				
-				}
-			}
-				
-				//////
-				
-			}
-			
-			
-            break;
-        default:
-            break;
+            Motor_Stop();
+            Motor_UpdateSoftwarePwm();
+            simple_delay_ms(20);
+        }
     }
-	
-}
 
-uint8_t cntzz=0;
-void UART_0_INST_IRQHandler()
-{
-    switch (DL_UART_Main_getPendingInterrupt(UART_0_INST)) {
-    /*! UART interrupt index for UART receive */
-    case DL_UART_MAIN_IIDX_RX: 
-        gEchoData = DL_UART_Main_receiveData(UART_0_INST);
-				if(gEchoData<128)
-					NOW_black=gEchoData;
-				if (gEchoData>128)
-					NOW_black_cnt=gEchoData-128;			
-        break;
-    default:
-        break;
+#elif TRACKING_ALGORITHM_DEBUG
+    /*
+     * 循迹算法调试 (电机强制关闭)
+     *
+     * CCS Expressions 观察:
+     *   g_debug_error         → 位置误差 (-3500 ~ +3500)
+     *   g_debug_black_count   → 检测到黑线的传感器数量
+     *   g_debug_sensor_bits   → 传感器原始位值
+     *   g_debug_follower_mode → 状态机 (0=WAIT,1=TRACK,2=BRIDGE, 0xFF=校准失败)
+     *   g_debug_left_speed    → 左轮目标速度
+     *   g_debug_right_speed   → 右轮目标速度
+     *   g_debug_turn          → 转向量
+     */
+    LineSensor_Init();
+
+    while (1) {
+        if (control_tick == 0U) {
+            LineFollower_Task();
+        }
+
+        Motor_Stop();
+        Motor_UpdateSoftwarePwm();
+        simple_delay_ms(1);
+
+        control_tick++;
+        if (control_tick >= 10U) {
+            control_tick = 0U;
+        }
     }
-}
 
+#else
+    /*
+     * 正常循迹模式
+     *
+     * 启动流程:
+     *   1. 上电 → 校准传感器 (车子必须停在白色背景上!)
+     *   2. 校准失败 → 电机保持停止 (g_debug_follower_mode = 0xFF)
+     *   3. 校准成功 → WAIT_LINE 等待黑线
+     *   4. 检测到黑线 → TRACK_LINE 循迹
+     *
+     * 调参: 只改 app_config.h
+     */
+    LineSensor_Init();
 
-int fputc(int c, FILE* stream)
-{
-    DL_UART_Main_transmitDataBlocking(UART_0_INST, c);
-    return c;
-}
- 
-int fputs(const char* restrict s, FILE* restrict stream)
-{
-    uint16_t i, len;
-    len = strlen(s);
-    for(i=0; i<len; i++)
-    {
-        DL_UART_Main_transmitDataBlocking(UART_0_INST, s[i]);
+    while (1) {
+        if (control_tick == 0U) {
+            LineFollower_Task();
+        }
+
+        Motor_UpdateSoftwarePwm();
+        simple_delay_ms(1);
+
+        control_tick++;
+        if (control_tick >= 10U) {
+            control_tick = 0U;
+        }
     }
-    return len;
+#endif
 }
