@@ -168,6 +168,8 @@ extern "C" {
 #define GPIO_LINE_LINE_X8_IOMUX                                  (IOMUX_PINCM48)
 
 
+
+
 /* clang-format on */
 
 void SYSCFG_DL_init(void);
@@ -177,6 +179,7 @@ void SYSCFG_DL_SYSCTL_init(void);
 void SYSCFG_DL_PWM_LEFT_init(void);
 void SYSCFG_DL_PWM_RIGHT_init(void);
 
+void SYSCFG_DL_SYSTICK_init(void);
 
 bool SYSCFG_DL_saveConfiguration(void);
 bool SYSCFG_DL_restoreConfiguration(void);

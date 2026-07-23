@@ -28,6 +28,8 @@
 #define SENSOR_RAW_DEBUG            0
 #define TRACKING_ALGORITHM_DEBUG    0
 
+#include <stdint.h>
+
 #include "ti_msp_dl_config.h"
 
 #include "line_follow.h"
@@ -60,18 +62,44 @@ static void simple_delay_ms(uint32_t ms)
     }
 }
 
+static volatile uint32_t g_control_tick_count;
+static uint32_t g_control_last_tick;
+
+void SysTick_Handler(void)
+{
+    g_control_tick_count++;
+}
+
+static void control_scheduler_reset(void)
+{
+    g_control_last_tick = g_control_tick_count;
+}
+
+static void wait_for_control_tick(void)
+{
+    uint32_t tick;
+
+    while (1) {
+        tick = g_control_tick_count;
+        if (tick != g_control_last_tick) {
+            g_control_last_tick = tick;
+            return;
+        }
+        __WFI();
+    }
+}
+
 int main(void)
 {
-    uint8_t control_tick = 0U;
-
     SYSCFG_DL_init();
     simple_delay_ms(500);
     Motor_Init();
+    control_scheduler_reset();
 
 #if FORCE_MOTOR_STOP_TEST
+    Motor_Stop();
     while (1) {
-        Motor_Stop();
-        simple_delay_ms(1);
+        __WFI();
     }
 
 #elif FORCE_STRAIGHT_FORWARD_TEST
@@ -80,14 +108,8 @@ int main(void)
      */
     LineSensor_Init();
     while (1) {
-        if (control_tick == 0U) {
-            Motor_SetSpeeds(120, 120);
-        }
-        simple_delay_ms(1);
-        control_tick++;
-        if (control_tick >= 10U) {
-            control_tick = 0U;
-        }
+        wait_for_control_tick();
+        Motor_SetSpeeds(120, 120);
     }
 
 #elif SENSOR_RAW_DEBUG
@@ -105,17 +127,21 @@ int main(void)
         volatile uint8_t g_debug_line_raw;
         volatile uint8_t g_debug_line_count;
         volatile bool g_debug_line_ok;
+        uint8_t sample_divider = 0U;
 
         LineSensor_Init();
+        Motor_Stop();
 
         while (1) {
-            g_debug_line_ok = LineSensor_ReadRaw(&g_debug_line_raw);
-            if (g_debug_line_ok) {
-                g_debug_line_count = count_raw_ones(g_debug_line_raw);
+            wait_for_control_tick();
+            sample_divider++;
+            if (sample_divider >= 2U) {
+                sample_divider = 0U;
+                g_debug_line_ok = LineSensor_ReadRaw(&g_debug_line_raw);
+                if (g_debug_line_ok) {
+                    g_debug_line_count = count_raw_ones(g_debug_line_raw);
+                }
             }
-
-            Motor_Stop();
-            simple_delay_ms(20);
         }
     }
 
@@ -135,17 +161,9 @@ int main(void)
     LineSensor_Init();
 
     while (1) {
-        if (control_tick == 0U) {
-            LineFollower_Task();
-        }
-
+        wait_for_control_tick();
+        LineFollower_Task();
         Motor_Stop();
-        simple_delay_ms(1);
-
-        control_tick++;
-        if (control_tick >= 10U) {
-            control_tick = 0U;
-        }
     }
 
 #else
@@ -163,16 +181,8 @@ int main(void)
     LineSensor_Init();
 
     while (1) {
-        if (control_tick == 0U) {
-            LineFollower_Task();
-        }
-
-        simple_delay_ms(1);
-
-        control_tick++;
-        if (control_tick >= 10U) {
-            control_tick = 0U;
-        }
+        wait_for_control_tick();
+        LineFollower_Task();
     }
 #endif
 }

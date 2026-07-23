@@ -54,6 +54,7 @@ SYSCONFIG_WEAK void SYSCFG_DL_init(void)
     SYSCFG_DL_SYSCTL_init();
     SYSCFG_DL_PWM_LEFT_init();
     SYSCFG_DL_PWM_RIGHT_init();
+    SYSCFG_DL_SYSTICK_init();
     /* Ensure backup structures have no valid state */
 	gPWM_RIGHTBackup.backupRdy 	= false;
 
@@ -88,10 +89,12 @@ SYSCONFIG_WEAK void SYSCFG_DL_initPower(void)
     DL_TimerG_reset(PWM_LEFT_INST);
     DL_TimerG_reset(PWM_RIGHT_INST);
 
+
     DL_GPIO_enablePower(GPIOA);
     DL_GPIO_enablePower(GPIOB);
     DL_TimerG_enablePower(PWM_LEFT_INST);
     DL_TimerG_enablePower(PWM_RIGHT_INST);
+
     delay_cycles(POWER_STARTUP_DELAY);
 }
 
@@ -274,4 +277,13 @@ SYSCONFIG_WEAK void SYSCFG_DL_PWM_RIGHT_init(void) {
 
 }
 
+
+SYSCONFIG_WEAK void SYSCFG_DL_SYSTICK_init(void)
+{
+    /*
+     * Initializes the SysTick period to 10.00 ms,
+     * enables the interrupt, and starts the SysTick Timer
+     */
+    DL_SYSTICK_config(320000);
+}
 
