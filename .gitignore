@@ -24,6 +24,12 @@
 **/JLinkLog.txt
 **/JLinkSettings.ini
 
+# Local backups produced while regenerating MSPM0 SysConfig files.
+**/ti_msp_dl_config.*.backup
+
+# Local DSLite diagnostic logs from board flashing.
+**/DSLite-*.log
+
 # Keep only the CMSIS-DSP binary used by the STM32H750 CMake build.
 **/Drivers/CMSIS/DSP/Examples/
 **/Drivers/CMSIS/DSP/DSP_Lib_TestSuite/
