@@ -76,13 +76,16 @@
  * 正方形赛道直角弯处短暂丢线 → 保持转向惯性直行穿越 →
  * 重新检测到线 → 恢复巡线
  */
-#define CAR_BRIDGE_SPEED              (138)
-#define CAR_BRIDGE_ENABLE             (1)
-#define CAR_BRIDGE_MIN_STRAIGHT_TICKS (20)
-#define CAR_LINE_REACQUIRE_TICKS      (3)
-#define CAR_BRIDGE_MAX_TICKS          (200)
+#define CAR_SOLID_BLACK_COUNT          (7)
+#define CAR_JUNCTION_SPEED             (104)
+#define CAR_JUNCTION_TURN_DIV          (2)
+#define CAR_JUNCTION_MAX_TICKS         (30)
 
-#define CAR_SOLID_BLACK_COUNT         (7)
+#define CAR_LOST_SEARCH_SPEED          (98)
+#define CAR_LOST_SEARCH_TURN           (70)
+#define CAR_LOST_SEARCH_HOLD_TICKS     (12)
+#define CAR_LOST_SEARCH_MAX_TICKS      (100)
+#define CAR_LINE_REACQUIRE_TICKS       (3)
 
 /*
  * 电机转向取反 (0=正常, 1=取反)

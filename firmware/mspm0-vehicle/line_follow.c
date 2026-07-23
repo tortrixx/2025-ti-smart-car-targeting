@@ -25,7 +25,8 @@
 typedef enum {
     FOLLOWER_WAIT_LINE = 0,
     FOLLOWER_TRACK_LINE,
-    FOLLOWER_BRIDGE_STRAIGHT,
+    FOLLOWER_JUNCTION,
+    FOLLOWER_LOST_SEARCH,
 } Follower_Mode;
 
 static Follower_Mode g_mode;
@@ -216,26 +217,36 @@ static void enter_track(int16_t error)
     reset_control_history(error);
 }
 
-static void enter_bridge(void)
+static void enter_junction(void)
 {
-    g_mode = FOLLOWER_BRIDGE_STRAIGHT;
+    g_mode = FOLLOWER_JUNCTION;
     g_bridge_ticks = 0U;
     g_reacquire_ticks = 0U;
-    reset_control_history(0);
+}
+
+static void enter_lost_search(void)
+{
+    g_mode = FOLLOWER_LOST_SEARCH;
+    g_bridge_ticks = 0U;
+    g_reacquire_ticks = 0U;
+    g_last_turn_on_loss = g_debug_turn;
+    if (g_last_turn_on_loss == 0) {
+        g_last_turn_on_loss = (g_last_error < 0) ?
+            -CAR_LOST_SEARCH_TURN : CAR_LOST_SEARCH_TURN;
+    }
 }
 
 static void drive_track(int16_t error, uint8_t black_count)
 {
     int16_t turn;
 
+    if (black_count == 0U) {
+        enter_lost_search();
+        return;
+    }
+
     if (!line_is_valid(black_count)) {
-#if CAR_BRIDGE_ENABLE
-        g_last_turn_on_loss = g_debug_turn;
-        enter_bridge();
-        set_forward_speeds(CAR_BRIDGE_SPEED, CAR_BRIDGE_SPEED);
-#else
-        stop_motors();
-#endif
+        enter_junction();
         return;
     }
 
@@ -244,9 +255,9 @@ static void drive_track(int16_t error, uint8_t black_count)
     set_diff_speeds(g_debug_base_speed, turn);
 }
 
-static void drive_bridge(int16_t error, uint8_t black_count)
+static void drive_junction(int16_t error, uint8_t black_count)
 {
-    int16_t bridge_turn;
+    int16_t junction_turn;
 
     if (g_bridge_ticks < 0xFFFFU) {
         g_bridge_ticks++;
@@ -256,17 +267,12 @@ static void drive_bridge(int16_t error, uint8_t black_count)
      * 丢线初期保持最后转向的50%, 帮助完成直角弯
      * 之后纯直行搜索线
      */
-    if (g_bridge_ticks < CAR_BRIDGE_MIN_STRAIGHT_TICKS) {
-        bridge_turn = (int16_t)(g_last_turn_on_loss / 2);
-    } else {
-        bridge_turn = 0;
-    }
-    g_debug_base_speed = CAR_BRIDGE_SPEED;
-    set_diff_speeds(g_debug_base_speed, bridge_turn);
+    junction_turn = (int16_t)(g_last_turn / CAR_JUNCTION_TURN_DIV);
+    g_debug_base_speed = CAR_JUNCTION_SPEED;
+    set_diff_speeds(g_debug_base_speed, junction_turn);
 
     /* 重新检测到线 → 回到循迹 */
-    if ((g_bridge_ticks >= CAR_BRIDGE_MIN_STRAIGHT_TICKS) &&
-        line_is_valid(black_count)) {
+    if (line_is_valid(black_count)) {
         if (g_reacquire_ticks < CAR_LINE_REACQUIRE_TICKS) {
             g_reacquire_ticks++;
         }
@@ -280,7 +286,45 @@ static void drive_bridge(int16_t error, uint8_t black_count)
     }
 
     /* 超时 → 停车等待 */
-    if (g_bridge_ticks >= CAR_BRIDGE_MAX_TICKS) {
+    if (black_count == 0U) {
+        enter_lost_search();
+    } else if (g_bridge_ticks >= CAR_JUNCTION_MAX_TICKS) {
+        enter_lost_search();
+    }
+}
+
+static void drive_lost_search(int16_t error, uint8_t black_count)
+{
+    int16_t search_turn;
+
+    if (g_bridge_ticks < 0xFFFFU) {
+        g_bridge_ticks++;
+    }
+
+    if (line_is_valid(black_count)) {
+        if (g_reacquire_ticks < CAR_LINE_REACQUIRE_TICKS) {
+            g_reacquire_ticks++;
+        }
+        if (g_reacquire_ticks >= CAR_LINE_REACQUIRE_TICKS) {
+            enter_track(error);
+            drive_track(error, black_count);
+            return;
+        }
+    } else {
+        g_reacquire_ticks = 0U;
+    }
+
+    if (g_bridge_ticks < CAR_LOST_SEARCH_HOLD_TICKS) {
+        search_turn = g_last_turn_on_loss;
+    } else {
+        search_turn = (g_last_turn_on_loss < 0) ?
+            -CAR_LOST_SEARCH_TURN : CAR_LOST_SEARCH_TURN;
+    }
+    g_debug_base_speed = CAR_LOST_SEARCH_SPEED;
+    g_debug_turn = search_turn;
+    set_diff_speeds(g_debug_base_speed, search_turn);
+
+    if (g_bridge_ticks >= CAR_LOST_SEARCH_MAX_TICKS) {
         g_mode = FOLLOWER_WAIT_LINE;
         g_bridge_ticks = 0U;
         stop_motors();
@@ -350,8 +394,12 @@ bool LineFollower_Task(void)
         drive_track(error, black_count);
         break;
 
-    case FOLLOWER_BRIDGE_STRAIGHT:
-        drive_bridge(error, black_count);
+    case FOLLOWER_JUNCTION:
+        drive_junction(error, black_count);
+        break;
+
+    case FOLLOWER_LOST_SEARCH:
+        drive_lost_search(error, black_count);
         break;
 
     default:
