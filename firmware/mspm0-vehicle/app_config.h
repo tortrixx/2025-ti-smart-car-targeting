@@ -38,6 +38,9 @@
 #define CAR_POSITION_KD            (7)
 #define CAR_TURN_SCALE             (100)
 
+/* D term low-pass filter: 1/4 of the new derivative per 10ms tick. */
+#define CAR_DERIVATIVE_FILTER_DIV  (4)
+
 /* 转向最大量 / Turn delta limit (per cycle) */
 #define CAR_MAX_TURN_DELTA         (190)
 
@@ -53,6 +56,13 @@
 
 /* 多线检测时额外减速 / Slowdown when multi-line detected */
 #define CAR_MULTI_LINE_SLOWDOWN    (6)
+
+/* Slow down further when steering demand is high. */
+#define CAR_TURN_SLOWDOWN_DIV      (6)
+
+/* Per-10ms target-duty slew limits. */
+#define CAR_SPEED_SLEW_UP           (12)
+#define CAR_SPEED_SLEW_DOWN         (30)
 
 /* 转向死区 (小于此值视为error≈0) / Turn deadband */
 #define CAR_TURN_DEADBAND          (320)
