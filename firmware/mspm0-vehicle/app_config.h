@@ -18,10 +18,10 @@
  * 基础速度 / Base speed (PWM duty 0~CAR_PWM_MAX)
  * 参考已验证值: 148
  */
-#define CAR_BASE_SPEED             (148)
+#define CAR_BASE_SPEED             (100)
 
 /* 转弯最小速度 (防停转) / Minimum turn speed (prevent stall) */
-#define CAR_MIN_TURN_SPEED         (88)
+#define CAR_MIN_TURN_SPEED         (55)
 
 /* 转弯时内圈最小速度 / Minimum inner wheel speed during turn */
 #define CAR_MIN_INNER_SPEED        (24)
@@ -37,6 +37,9 @@
 #define CAR_POSITION_KP            (8)
 #define CAR_POSITION_KD            (7)
 #define CAR_TURN_SCALE             (100)
+
+/* D term low-pass filter: 1/4 of the new derivative per 10ms tick. */
+#define CAR_DERIVATIVE_FILTER_DIV  (4)
 
 /* 转向最大量 / Turn delta limit (per cycle) */
 #define CAR_MAX_TURN_DELTA         (190)
@@ -54,6 +57,13 @@
 /* 多线检测时额外减速 / Slowdown when multi-line detected */
 #define CAR_MULTI_LINE_SLOWDOWN    (6)
 
+/* Slow down further when steering demand is high. */
+#define CAR_TURN_SLOWDOWN_DIV      (6)
+
+/* Per-10ms target-duty slew limits. */
+#define CAR_SPEED_SLEW_UP           (12)
+#define CAR_SPEED_SLEW_DOWN         (30)
+
 /* 转向死区 (小于此值视为error≈0) / Turn deadband */
 #define CAR_TURN_DEADBAND          (320)
 
@@ -66,19 +76,22 @@
  * 正方形赛道直角弯处短暂丢线 → 保持转向惯性直行穿越 →
  * 重新检测到线 → 恢复巡线
  */
-#define CAR_BRIDGE_SPEED              (138)
-#define CAR_BRIDGE_ENABLE             (1)
-#define CAR_BRIDGE_MIN_STRAIGHT_TICKS (20)
-#define CAR_LINE_REACQUIRE_TICKS      (3)
-#define CAR_BRIDGE_MAX_TICKS          (200)
+#define CAR_SOLID_BLACK_COUNT          (7)
+#define CAR_JUNCTION_SPEED             (80)
+#define CAR_JUNCTION_TURN_DIV          (2)
+#define CAR_JUNCTION_MAX_TICKS         (30)
 
-#define CAR_SOLID_BLACK_COUNT         (7)
+#define CAR_LOST_SEARCH_SPEED          (75)
+#define CAR_LOST_SEARCH_TURN           (70)
+#define CAR_LOST_SEARCH_HOLD_TICKS     (12)
+#define CAR_LOST_SEARCH_MAX_TICKS      (100)
+#define CAR_LINE_REACQUIRE_TICKS       (3)
 
 /*
  * 电机转向取反 (0=正常, 1=取反)
  * Motor direction invert
  */
-#define MOTOR_LEFT_INVERT          (0)
-#define MOTOR_RIGHT_INVERT         (1)
+#define MOTOR_LEFT_INVERT          (1)
+#define MOTOR_RIGHT_INVERT         (0)
 
 #endif /* APP_CONFIG_H_ */

@@ -25,13 +25,17 @@
 typedef enum {
     FOLLOWER_WAIT_LINE = 0,
     FOLLOWER_TRACK_LINE,
-    FOLLOWER_BRIDGE_STRAIGHT,
+    FOLLOWER_JUNCTION,
+    FOLLOWER_LOST_SEARCH,
 } Follower_Mode;
 
 static Follower_Mode g_mode;
 static int16_t g_last_error;
+static int16_t g_filtered_derivative;
 static int16_t g_last_turn;
 static int16_t g_last_turn_on_loss;
+static int16_t g_command_left_speed;
+static int16_t g_command_right_speed;
 static uint16_t g_bridge_ticks;
 static uint8_t g_reacquire_ticks;
 static bool g_cal_was_ok;
@@ -43,6 +47,8 @@ uint8_t g_debug_follower_mode = 0;
 int16_t g_debug_left_speed = 0;
 int16_t g_debug_right_speed = 0;
 int16_t g_debug_turn = 0;
+int16_t g_debug_derivative = 0;
+int16_t g_debug_base_speed = 0;
 
 static int16_t clamp_i16(int16_t value, int16_t min_value, int16_t max_value)
 {
@@ -54,6 +60,29 @@ static int16_t clamp_i16(int16_t value, int16_t min_value, int16_t max_value)
 static int16_t abs_i16(int16_t value)
 {
     return (value < 0) ? (int16_t)-value : value;
+}
+
+static int16_t limit_speed_slew(int16_t current, int16_t target)
+{
+    int16_t limit = (target > current) ? CAR_SPEED_SLEW_UP :
+        CAR_SPEED_SLEW_DOWN;
+
+    if (target > (int16_t)(current + limit)) {
+        return (int16_t)(current + limit);
+    }
+    if (target < (int16_t)(current - limit)) {
+        return (int16_t)(current - limit);
+    }
+    return target;
+}
+
+static void stop_motors(void)
+{
+    g_command_left_speed = 0;
+    g_command_right_speed = 0;
+    g_debug_left_speed = 0;
+    g_debug_right_speed = 0;
+    Motor_Stop();
 }
 
 static bool sensor_is_black(const LineSensor_Data *sensor, uint8_t index)
@@ -70,9 +99,11 @@ static void set_forward_speeds(int16_t left_speed, int16_t right_speed)
 {
     left_speed = clamp_i16(left_speed, 0, CAR_PWM_MAX);
     right_speed = clamp_i16(right_speed, 0, CAR_PWM_MAX);
-    g_debug_left_speed  = left_speed;
-    g_debug_right_speed = right_speed;
-    Motor_SetSpeeds(left_speed, right_speed);
+    g_command_left_speed = limit_speed_slew(g_command_left_speed, left_speed);
+    g_command_right_speed = limit_speed_slew(g_command_right_speed, right_speed);
+    g_debug_left_speed  = g_command_left_speed;
+    g_debug_right_speed = g_command_right_speed;
+    Motor_SetSpeeds(g_command_left_speed, g_command_right_speed);
 }
 
 static void set_diff_speeds(int16_t base_speed, int16_t turn)
@@ -113,7 +144,8 @@ static int16_t calc_line_error(const LineSensor_Data *sensor,
     return (int16_t)(sum / (int32_t)count);
 }
 
-static int16_t calc_base_speed(int16_t error, uint8_t black_count)
+static int16_t calc_base_speed(int16_t error, uint8_t black_count,
+    int16_t turn)
 {
     int16_t speed = (int16_t)(CAR_BASE_SPEED -
         (abs_i16(error) / CAR_SPEED_SLOWDOWN_DIV));
@@ -122,6 +154,8 @@ static int16_t calc_base_speed(int16_t error, uint8_t black_count)
         speed = (int16_t)(speed -
             ((int16_t)(black_count - 2U) * CAR_MULTI_LINE_SLOWDOWN));
     }
+
+    speed = (int16_t)(speed - (abs_i16(turn) / CAR_TURN_SLOWDOWN_DIV));
 
     return clamp_i16(speed, CAR_MIN_TURN_SPEED, CAR_BASE_SPEED);
 }
@@ -139,6 +173,7 @@ static int16_t limit_turn_step(int16_t turn)
 static int16_t calc_turn_delta(int16_t error)
 {
     int16_t derivative;
+    int32_t derivative_filter_delta;
     int32_t turn;
 
     if (abs_i16(error) < CAR_TURN_DEADBAND) {
@@ -146,8 +181,11 @@ static int16_t calc_turn_delta(int16_t error)
     }
 
     derivative = (int16_t)(error - g_last_error);
+    derivative_filter_delta = (int32_t)derivative - g_filtered_derivative;
+    g_filtered_derivative = (int16_t)(g_filtered_derivative +
+        (derivative_filter_delta / CAR_DERIVATIVE_FILTER_DIV));
     turn = ((int32_t)error * CAR_POSITION_KP) +
-           ((int32_t)derivative * CAR_POSITION_KD);
+           ((int32_t)g_filtered_derivative * CAR_POSITION_KD);
     turn /= CAR_TURN_SCALE;
 
     if ((error != 0) && (abs_i16(error) < CAR_FINE_TURN_ERROR)) {
@@ -159,6 +197,7 @@ static int16_t calc_turn_delta(int16_t error)
 
     g_last_error = error;
     g_debug_turn = (int16_t)turn;
+    g_debug_derivative = g_filtered_derivative;
 
     return (int16_t)turn;
 }
@@ -166,6 +205,7 @@ static int16_t calc_turn_delta(int16_t error)
 static void reset_control_history(int16_t error)
 {
     g_last_error = error;
+    g_filtered_derivative = 0;
     g_last_turn = 0;
 }
 
@@ -177,38 +217,47 @@ static void enter_track(int16_t error)
     reset_control_history(error);
 }
 
-static void enter_bridge(void)
+static void enter_junction(void)
 {
-    g_mode = FOLLOWER_BRIDGE_STRAIGHT;
+    g_mode = FOLLOWER_JUNCTION;
     g_bridge_ticks = 0U;
     g_reacquire_ticks = 0U;
-    reset_control_history(0);
+}
+
+static void enter_lost_search(void)
+{
+    g_mode = FOLLOWER_LOST_SEARCH;
+    g_bridge_ticks = 0U;
+    g_reacquire_ticks = 0U;
+    g_last_turn_on_loss = g_debug_turn;
+    if (g_last_turn_on_loss == 0) {
+        g_last_turn_on_loss = (g_last_error < 0) ?
+            -CAR_LOST_SEARCH_TURN : CAR_LOST_SEARCH_TURN;
+    }
 }
 
 static void drive_track(int16_t error, uint8_t black_count)
 {
-    int16_t base_speed;
     int16_t turn;
 
-    if (!line_is_valid(black_count)) {
-#if CAR_BRIDGE_ENABLE
-        g_last_turn_on_loss = g_debug_turn;
-        enter_bridge();
-        set_forward_speeds(CAR_BRIDGE_SPEED, CAR_BRIDGE_SPEED);
-#else
-        Motor_Stop();
-#endif
+    if (black_count == 0U) {
+        enter_lost_search();
         return;
     }
 
-    base_speed = calc_base_speed(error, black_count);
+    if (!line_is_valid(black_count)) {
+        enter_junction();
+        return;
+    }
+
     turn = calc_turn_delta(error);
-    set_diff_speeds(base_speed, turn);
+    g_debug_base_speed = calc_base_speed(error, black_count, turn);
+    set_diff_speeds(g_debug_base_speed, turn);
 }
 
-static void drive_bridge(int16_t error, uint8_t black_count)
+static void drive_junction(int16_t error, uint8_t black_count)
 {
-    int16_t bridge_turn;
+    int16_t junction_turn;
 
     if (g_bridge_ticks < 0xFFFFU) {
         g_bridge_ticks++;
@@ -218,16 +267,12 @@ static void drive_bridge(int16_t error, uint8_t black_count)
      * 丢线初期保持最后转向的50%, 帮助完成直角弯
      * 之后纯直行搜索线
      */
-    if (g_bridge_ticks < CAR_BRIDGE_MIN_STRAIGHT_TICKS) {
-        bridge_turn = (int16_t)(g_last_turn_on_loss / 2);
-    } else {
-        bridge_turn = 0;
-    }
-    set_diff_speeds(CAR_BRIDGE_SPEED, bridge_turn);
+    junction_turn = (int16_t)(g_last_turn / CAR_JUNCTION_TURN_DIV);
+    g_debug_base_speed = CAR_JUNCTION_SPEED;
+    set_diff_speeds(g_debug_base_speed, junction_turn);
 
     /* 重新检测到线 → 回到循迹 */
-    if ((g_bridge_ticks >= CAR_BRIDGE_MIN_STRAIGHT_TICKS) &&
-        line_is_valid(black_count)) {
+    if (line_is_valid(black_count)) {
         if (g_reacquire_ticks < CAR_LINE_REACQUIRE_TICKS) {
             g_reacquire_ticks++;
         }
@@ -241,10 +286,48 @@ static void drive_bridge(int16_t error, uint8_t black_count)
     }
 
     /* 超时 → 停车等待 */
-    if (g_bridge_ticks >= CAR_BRIDGE_MAX_TICKS) {
+    if (black_count == 0U) {
+        enter_lost_search();
+    } else if (g_bridge_ticks >= CAR_JUNCTION_MAX_TICKS) {
+        enter_lost_search();
+    }
+}
+
+static void drive_lost_search(int16_t error, uint8_t black_count)
+{
+    int16_t search_turn;
+
+    if (g_bridge_ticks < 0xFFFFU) {
+        g_bridge_ticks++;
+    }
+
+    if (line_is_valid(black_count)) {
+        if (g_reacquire_ticks < CAR_LINE_REACQUIRE_TICKS) {
+            g_reacquire_ticks++;
+        }
+        if (g_reacquire_ticks >= CAR_LINE_REACQUIRE_TICKS) {
+            enter_track(error);
+            drive_track(error, black_count);
+            return;
+        }
+    } else {
+        g_reacquire_ticks = 0U;
+    }
+
+    if (g_bridge_ticks < CAR_LOST_SEARCH_HOLD_TICKS) {
+        search_turn = g_last_turn_on_loss;
+    } else {
+        search_turn = (g_last_turn_on_loss < 0) ?
+            -CAR_LOST_SEARCH_TURN : CAR_LOST_SEARCH_TURN;
+    }
+    g_debug_base_speed = CAR_LOST_SEARCH_SPEED;
+    g_debug_turn = search_turn;
+    set_diff_speeds(g_debug_base_speed, search_turn);
+
+    if (g_bridge_ticks >= CAR_LOST_SEARCH_MAX_TICKS) {
         g_mode = FOLLOWER_WAIT_LINE;
         g_bridge_ticks = 0U;
-        Motor_Stop();
+        stop_motors();
     }
 }
 
@@ -252,6 +335,7 @@ void LineFollower_Reset(void)
 {
     g_mode = FOLLOWER_WAIT_LINE;
     g_last_error = 0;
+    g_filtered_derivative = 0;
     g_last_turn = 0;
     g_last_turn_on_loss = 0;
     g_bridge_ticks = 0U;
@@ -265,6 +349,8 @@ void LineFollower_Reset(void)
     g_debug_left_speed = 0;
     g_debug_right_speed = 0;
     g_debug_turn = 0;
+    g_debug_derivative = 0;
+    g_debug_base_speed = 0;
 }
 
 bool LineFollower_Task(void)
@@ -276,14 +362,14 @@ bool LineFollower_Task(void)
     if (!g_cal_was_ok) {
         if (!LineSensor_IsCalibrated()) {
             g_debug_follower_mode = 0xFFU;
-            Motor_Stop();
+            stop_motors();
             return false;
         }
         g_cal_was_ok = true;
     }
 
     if (!LineSensor_Read(&sensor)) {
-        Motor_Stop();
+        stop_motors();
         return false;
     }
 
@@ -300,7 +386,7 @@ bool LineFollower_Task(void)
             enter_track(error);
             drive_track(error, black_count);
         } else {
-            Motor_Stop();
+            stop_motors();
         }
         break;
 
@@ -308,12 +394,16 @@ bool LineFollower_Task(void)
         drive_track(error, black_count);
         break;
 
-    case FOLLOWER_BRIDGE_STRAIGHT:
-        drive_bridge(error, black_count);
+    case FOLLOWER_JUNCTION:
+        drive_junction(error, black_count);
+        break;
+
+    case FOLLOWER_LOST_SEARCH:
+        drive_lost_search(error, black_count);
         break;
 
     default:
-        Motor_Stop();
+        stop_motors();
         break;
     }
 
