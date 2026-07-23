@@ -42,9 +42,6 @@
 
 #define CONFIG_MSPM0G350X
 #define CONFIG_MSPM0G3507
-#ifndef DeviceFamily_MSPM0G350X
-#define DeviceFamily_MSPM0G350X
-#endif
 
 #if defined(__ti_version__) || defined(__TI_COMPILER_VERSION__)
 #define SYSCONFIG_WEAK __attribute__((weak))
@@ -84,7 +81,7 @@ extern "C" {
 #define PWM_LEFT_INST                                                      TIMG0
 #define PWM_LEFT_INST_IRQHandler                                TIMG0_IRQHandler
 #define PWM_LEFT_INST_INT_IRQN                                  (TIMG0_INT_IRQn)
-#define PWM_LEFT_INST_CLK_FREQ                                            100000
+#define PWM_LEFT_INST_CLK_FREQ                                           2000000
 /* GPIO defines for channel 0 */
 #define GPIO_PWM_LEFT_C0_PORT                                              GPIOA
 #define GPIO_PWM_LEFT_C0_PIN                                      DL_GPIO_PIN_12
@@ -102,7 +99,7 @@ extern "C" {
 #define PWM_RIGHT_INST                                                     TIMG7
 #define PWM_RIGHT_INST_IRQHandler                               TIMG7_IRQHandler
 #define PWM_RIGHT_INST_INT_IRQN                                 (TIMG7_INT_IRQn)
-#define PWM_RIGHT_INST_CLK_FREQ                                           100000
+#define PWM_RIGHT_INST_CLK_FREQ                                          2000000
 /* GPIO defines for channel 0 */
 #define GPIO_PWM_RIGHT_C0_PORT                                             GPIOA
 #define GPIO_PWM_RIGHT_C0_PIN                                     DL_GPIO_PIN_28

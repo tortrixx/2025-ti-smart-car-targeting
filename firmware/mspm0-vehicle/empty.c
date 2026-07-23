@@ -13,8 +13,8 @@
  *   - AT8236双路电机驱动
  *
  * 架构 / Architecture:
- *   - 每1ms: Motor_UpdateSoftwarePwm() 更新软件PWM
- *   - 每10ms: LineFollower_Task() 执行循迹算法（直接设置电机速度）
+ *   - TIMG0/TIMG7: hardware PWM updates motor duty continuously
+ *   - every 10ms: LineFollower_Task() executes line tracking
  *
  * 模式选择 / Mode Select:
  *   #define FORCE_MOTOR_STOP_TEST 1    → 仅停止电机 (安全验证)
@@ -71,7 +71,6 @@ int main(void)
 #if FORCE_MOTOR_STOP_TEST
     while (1) {
         Motor_Stop();
-        Motor_UpdateSoftwarePwm();
         simple_delay_ms(1);
     }
 
@@ -84,7 +83,6 @@ int main(void)
         if (control_tick == 0U) {
             Motor_SetSpeeds(120, 120);
         }
-        Motor_UpdateSoftwarePwm();
         simple_delay_ms(1);
         control_tick++;
         if (control_tick >= 10U) {
@@ -117,7 +115,6 @@ int main(void)
             }
 
             Motor_Stop();
-            Motor_UpdateSoftwarePwm();
             simple_delay_ms(20);
         }
     }
@@ -143,7 +140,6 @@ int main(void)
         }
 
         Motor_Stop();
-        Motor_UpdateSoftwarePwm();
         simple_delay_ms(1);
 
         control_tick++;
@@ -171,7 +167,6 @@ int main(void)
             LineFollower_Task();
         }
 
-        Motor_UpdateSoftwarePwm();
         simple_delay_ms(1);
 
         control_tick++;

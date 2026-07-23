@@ -25,8 +25,9 @@ const SYSCTL = scripting.addModule("/ti/driverlib/SYSCTL");
  * TIMG0 双通道PWM
  * ================================================================ */
 PWM1.$name                      = "PWM_LEFT";
-PWM1.clockDivider               = 8;
-PWM1.clockPrescale              = 40;
+PWM1.clockDivider               = 1;
+PWM1.clockPrescale              = 16;
+PWM1.timerCount                 = 999;
 PWM1.peripheral.$assign         = "TIMG0";
 PWM1.peripheral.ccp0Pin.$assign = "PA12";
 PWM1.peripheral.ccp1Pin.$assign = "PA13";
@@ -37,8 +38,9 @@ PWM1.peripheral.ccp1Pin.$assign = "PA13";
  * TIMG7 双通道PWM
  * ================================================================ */
 PWM2.$name                      = "PWM_RIGHT";
-PWM2.clockDivider               = 8;
-PWM2.clockPrescale              = 40;
+PWM2.clockDivider               = 1;
+PWM2.clockPrescale              = 16;
+PWM2.timerCount                 = 999;
 PWM2.peripheral.$assign         = "TIMG7";
 PWM2.peripheral.ccp0Pin.$assign = "PA28";
 PWM2.peripheral.ccp1Pin.$assign = "PA31";
